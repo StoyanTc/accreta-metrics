@@ -18,7 +18,9 @@ cargo run
 
 Env vars (all optional): `ACCRETA_METRICS_ADDR` (default `0.0.0.0:8080`),
 `ACCRETA_METRICS_USERNAME` / `ACCRETA_METRICS_PASSWORD` (default `demo` / `demo123` — the one
-seeded demo credential for v1).
+seeded demo credential for v1), `ACCRETA_METRICS_ROLLUP_INTERVAL_SECS` (default `30` — how often
+the background sweep rolls minute buckets up into hour/day/week/month/year; lower this for local
+testing so you don't have to wait to query at a coarser level than you ingested at).
 
 With the server running, this walkthrough (the same sequence used to smoke-test the service)
 creates a schema, ingests a few samples, and runs a couple of queries:
@@ -50,10 +52,10 @@ curl -s -X POST http://localhost:8080/schema/ingest \
     ]
   }'
 
-# 4. Query: average + p95 latency and request count, grouped by region
+# 4. Query at "minute" level — populated immediately, no wait needed
 curl -s -X POST http://localhost:8080/schema/query \
   -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' -d '{
-    "level": "hour",
+    "level": "minute",
     "time_range": {"start": "2026-08-01T00:00:00Z", "end": "2026-08-02T00:00:00Z"},
     "group_by": ["region"],
     "select": [
@@ -62,10 +64,42 @@ curl -s -X POST http://localhost:8080/schema/query \
       {"measure": "request_count", "aggregate": "sum"}
     ]
   }'
+
+# 5. Querying at a coarser level ("hour", "day", ...) needs the background rollup sweep to have
+#    run at least once first (default every 30s — see "Defaults and gotchas" below). Either wait,
+#    or restart with ACCRETA_METRICS_ROLLUP_INTERVAL_SECS=2 for fast local iteration, then:
+curl -s -X POST http://localhost:8080/schema/query \
+  -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' -d '{
+    "level": "hour",
+    "time_range": {"start": "2026-08-01T00:00:00Z", "end": "2026-08-02T00:00:00Z"},
+    "group_by": ["region"],
+    "select": [{"measure": "latency_ms", "aggregate": "sum"}]
+  }'
 ```
 
 Or skip the `curl` and just open `http://localhost:8080/swagger-ui` — log in via `POST /login`
 in the UI, hit "Authorize" with the returned token, and drive the same sequence from "Try it out".
+
+## Defaults and gotchas
+
+Behavior that's correct but easy to get tripped up by, since none of it is obvious from the
+endpoint shapes alone:
+
+- **Querying a coarser level than you just ingested at returns `{"buckets":[]}`, not an error,
+  until the background rollup sweep has run.** `Engine::ingest` only ever writes `minute`
+  buckets; `hour`/`day`/`week`/`month`/`year` are only populated when `Engine::rollup()` runs,
+  which happens on `rollup.rs`'s background timer (default every 30s,
+  `ACCRETA_METRICS_ROLLUP_INTERVAL_SECS` to change it) — not inline on ingest. One sweep tick
+  fully cascades minute all the way up to year, so it's a one-time wait, not a per-level one. If
+  a query comes back empty, try `"level": "minute"` first to confirm the data's actually there
+  before assuming something's wrong.
+- **`{"buckets":[]}` and `404 {"error":"no_schema"}` mean different things** — empty buckets means
+  the schema exists but nothing (yet) matches the query (often the rollup-timing case above);
+  `no_schema` means `POST /schema` was never called for this tenant at all.
+- **CORS is wide open** (`CorsLayer::permissive()`) — fine for local/demo use, not something to
+  point at anything less trusted without tightening it first.
+- **JWT tokens expire after 30 minutes** (`TOKEN_TTL_MINUTES` in `auth.rs`) — not specified in the
+  design summary beyond "short expiry"; 30 was picked here and isn't configurable via env var yet.
 
 ## Verification status
 
@@ -123,3 +157,7 @@ in the UI, hit "Authorize" with the returned token, and drive the same sequence 
 - Late/out-of-order ingest past a retention-pruned bucket.
 - A health-check endpoint.
 - Persistence (explicitly deferred to v2).
+
+## License
+
+Licensed under  MIT license ([LICENSE-MIT](LICENSE-MIT))
