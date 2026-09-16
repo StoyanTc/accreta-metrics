@@ -6,14 +6,39 @@ provided for the full endpoint/behavior spec this implements.
 
 ## Requirements
 
-- Rust 1.85+ (the `accreta` crate requires edition 2024).
+- Rust 1.85+ (the `accreta` crate requires edition 2024), or
+- Docker / Podman for containerized deployment.
 
 ## Getting started
+
+### Native Run
 
 ```sh
 cargo build
 cargo run
 # Swagger UI: http://localhost:8080/swagger-ui
+```
+
+### Docker Run
+
+Build and run the container locally:
+
+```sh
+# Build image
+docker build -t accreta-metrics .
+
+# Run container exposing port 8080
+docker run -d -p 8080:8080 --name accreta-metrics accreta-metrics
+```
+
+Optionally pass custom configuration via environment variables:
+
+```sh
+docker run -d -p 8080:8080 \
+  -e ACCRETA_METRICS_USERNAME="admin" \
+  -e ACCRETA_METRICS_PASSWORD="secure_password" \
+  -e ACCRETA_METRICS_ROLLUP_INTERVAL_SECS="5" \
+  --name accreta-metrics accreta-metrics
 ```
 
 Env vars (all optional): `ACCRETA_METRICS_ADDR` (default `0.0.0.0:8080`),
@@ -22,7 +47,11 @@ seeded demo credential for v1), `ACCRETA_METRICS_ROLLUP_INTERVAL_SECS` (default 
 the background sweep rolls minute buckets up into hour/day/week/month/year; lower this for local
 testing so you don't have to wait to query at a coarser level than you ingested at).
 
-With the server running, this walkthrough (the same sequence used to smoke-test the service)
+---
+
+## Service Walkthrough
+
+With the server running locally or in Docker, this walkthrough (the same sequence used to smoke-test the service)
 creates a schema, ingests a few samples, and runs a couple of queries:
 
 ```sh
@@ -37,7 +66,7 @@ curl -s -X POST http://localhost:8080/schema \
     "name": "web_requests",
     "dimensions": ["host", "region"],
     "measures": [
-      {"name": "latency_ms", "value_type": "f64", "aggregates": ["sum", "count", "average", "tdigest"]},
+      {"name": "latency_ms", "value_type": "f64", "aggregates": ["sum", "count", "tdigest"]},
       {"name": "request_count", "value_type": "i64", "aggregates": ["sum", "count"]}
     ]
   }'
@@ -59,7 +88,8 @@ curl -s -X POST http://localhost:8080/schema/query \
     "time_range": {"start": "2026-08-01T00:00:00Z", "end": "2026-08-02T00:00:00Z"},
     "group_by": ["region"],
     "select": [
-      {"measure": "latency_ms", "aggregate": "average"},
+      {"measure": "latency_ms", "aggregate": "sum"},
+      {"measure": "latency_ms", "aggregate": "count"},
       {"measure": "latency_ms", "aggregate": "tdigest", "quantile": 0.95},
       {"measure": "request_count", "aggregate": "sum"}
     ]
@@ -160,4 +190,4 @@ endpoint shapes alone:
 
 ## License
 
-Licensed under  MIT license ([LICENSE-MIT](LICENSE-MIT))
+Licensed under MIT license ([LICENSE-MIT](LICENSE-MIT))

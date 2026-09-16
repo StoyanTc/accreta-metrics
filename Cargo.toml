@@ -1,8 +1,11 @@
 [package]
 name = "accreta-metrics"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 description = "Reference/demo tokio+axum service exposing the accreta mergeable-state aggregation engine over an OpenAPI HTTP surface."
+
+[profile.release]
+strip = true
 
 [dependencies]
 accreta = "0.1.1"
